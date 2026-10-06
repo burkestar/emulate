@@ -4,6 +4,8 @@ import { workosPlugin } from '../index.js';
 import { getWorkOSStore } from '../store.js';
 import { STORE_KEYS } from '../constants.js';
 import type { Store } from '../../core/index.js';
+import { formatSSOProfile } from '../helpers.js';
+import type { WorkOSSSOProfile } from '../entities.js';
 
 const apiKeys: ApiKeyMap = { sk_test_sso: { environment: 'test' } };
 const headers = { Authorization: 'Bearer sk_test_sso', 'Content-Type': 'application/json' };
@@ -325,6 +327,55 @@ describe('SSO routes', () => {
     expect(body.profile).toBeDefined();
     expect(body.profile.object).toBe('profile');
     expect(body.access_token).toBeDefined();
+    // The SDKs parse this as SSOTokenResponse, which requires both of these (#129).
+    expect(body.token_type).toBe('Bearer');
+    expect(body.expires_in).toBe(600);
+    // The token's own lifetime matches what the response reports.
+    const [, payload] = (body.access_token as string).split('.');
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    expect(claims.exp - claims.iat).toBe(body.expires_in);
+    // Every field the spec's SsoTokenResponse and Profile require is present.
+    for (const key of ['token_type', 'access_token', 'expires_in', 'profile']) {
+      expect(body).toHaveProperty(key);
+    }
+    for (const key of [
+      'object',
+      'id',
+      'organization_id',
+      'connection_id',
+      'connection_type',
+      'idp_id',
+      'email',
+      'first_name',
+      'last_name',
+      'name',
+      'raw_attributes',
+    ]) {
+      expect(body.profile).toHaveProperty(key);
+    }
+  });
+
+  it('derives the profile name from first_name and last_name', () => {
+    const base = {
+      id: 'prof_1',
+      object: 'profile',
+      connection_id: 'conn_1',
+      connection_type: 'GenericSAML',
+      organization_id: 'org_1',
+      idp_id: 'idp_1',
+      email: 'ada@acme.test',
+      groups: [],
+      raw_attributes: {},
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    } as const;
+    const name = (first_name: string | null, last_name: string | null) =>
+      formatSSOProfile({ ...base, first_name, last_name } as unknown as WorkOSSSOProfile).name;
+
+    expect(name('Ada', 'Lovelace')).toBe('Ada Lovelace');
+    expect(name('Ada', null)).toBe('Ada');
+    expect(name(null, 'Lovelace')).toBe('Lovelace');
+    expect(name(null, null)).toBeNull();
   });
 
   it('returns 404 when no active connection found', async () => {

@@ -28,6 +28,14 @@ const OAUTH_CONNECTION_TYPES = new Set<WorkOSConnectionType>([
   'MicrosoftOAuth',
 ]);
 
+/**
+ * Lifetime of the access token `/sso/token` issues, in seconds. Production reports it as
+ * `expires_in` (the API reference's example is 600), and the SDKs require that field — the
+ * Python SDK's `SSOTokenResponse` fails to parse a response without it — so the emulator signs
+ * the token with this lifetime and reports the same number.
+ */
+const SSO_TOKEN_TTL_SECONDS = 600;
+
 interface SSOAuthorizeParams {
   redirectUri: string;
   state: string | null;
@@ -283,11 +291,14 @@ export function ssoRoutes(ctx: RouteContext): void {
 
     ws.ssoAuthorizations.delete(auth.id);
 
-    const accessToken = jwt.sign({
-      sub: profile.id,
-      aud: (body.client_id as string) ?? 'workos-emulate',
-      org_id: auth.organization_id,
-    });
+    const accessToken = jwt.sign(
+      {
+        sub: profile.id,
+        aud: (body.client_id as string) ?? 'workos-emulate',
+        org_id: auth.organization_id,
+      },
+      { expiresIn: SSO_TOKEN_TTL_SECONDS },
+    );
 
     store.setData(`${STORE_KEY_PREFIXES.ssoToken}${accessToken}`, profile.id);
 
@@ -320,8 +331,10 @@ export function ssoRoutes(ctx: RouteContext): void {
     });
 
     return c.json({
-      profile: formatSSOProfile(profile),
+      token_type: 'Bearer',
       access_token: accessToken,
+      expires_in: SSO_TOKEN_TTL_SECONDS,
+      profile: formatSSOProfile(profile),
     });
   });
 

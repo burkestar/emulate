@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { createServer, type ApiKeyMap } from '../../core/index.js';
 import { workosPlugin } from '../index.js';
 import { getWorkOSStore } from '../store.js';
@@ -353,6 +353,47 @@ describe('SSO routes', () => {
     ]) {
       expect(body.profile).toHaveProperty(key);
     }
+  });
+
+  describe('/sso/profile token lifetime', () => {
+    afterEach(() => setSystemTime());
+
+    async function issueToken() {
+      const { conn } = await createOrgWithConnection();
+      const authRes = await app.request(
+        `/sso/authorize?connection=${conn.id}&redirect_uri=http://localhost:3000/callback`,
+      );
+      const code = new URL(authRes.headers.get('location')!).searchParams.get('code')!;
+      const tokenRes = await app.request('/sso/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'authorization_code', code }),
+      });
+      return (await json(tokenRes)) as { access_token: string; expires_in: number };
+    }
+
+    const profile = (token: string) => app.request('/sso/profile', { headers: { Authorization: `Bearer ${token}` } });
+
+    // The lifetime /sso/token reports is the one /sso/profile enforces: the token works for
+    // expires_in seconds and is refused once that has passed.
+    it('accepts an issued token until expires_in has passed, then refuses it', async () => {
+      const start = new Date('2026-01-01T00:00:00Z');
+      setSystemTime(start);
+      const { access_token, expires_in } = await issueToken();
+
+      expect((await profile(access_token)).status).toBe(200);
+
+      setSystemTime(new Date(start.getTime() + (expires_in - 1) * 1000));
+      expect((await profile(access_token)).status).toBe(200);
+
+      setSystemTime(new Date(start.getTime() + (expires_in + 1) * 1000));
+      const expired = await profile(access_token);
+      expect(expired.status).toBe(401);
+    });
+
+    it('refuses a token that is not one the emulator signed', async () => {
+      expect((await profile('not-a-token')).status).toBe(401);
+    });
   });
 
   it('derives the profile name from first_name and last_name', () => {

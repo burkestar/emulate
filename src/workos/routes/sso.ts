@@ -345,15 +345,20 @@ export function ssoRoutes(ctx: RouteContext): void {
     }
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
 
+    // The token is checked before anything is looked up: its signature and its `exp`, which is
+    // the `expires_in` /sso/token reported. Resolving a token through the store first and only
+    // verifying the ones it did not know would leave an issued token usable after it expired.
+    let payload: ReturnType<typeof jwt.verify>;
+    try {
+      payload = jwt.verify(token);
+    } catch {
+      throw new WorkOSApiError(401, 'Invalid access token', 'unauthorized');
+    }
+
     const profileId = store.getData<string>(`${STORE_KEY_PREFIXES.ssoToken}${token}`);
     if (!profileId) {
-      try {
-        const payload = jwt.verify(token);
-        const profile = ws.ssoProfiles.get(payload.sub);
-        if (profile) return c.json(formatSSOProfile(profile));
-      } catch {
-        // fall through
-      }
+      const profile = ws.ssoProfiles.get(payload.sub);
+      if (profile) return c.json(formatSSOProfile(profile));
       throw new WorkOSApiError(401, 'Invalid access token', 'unauthorized');
     }
 

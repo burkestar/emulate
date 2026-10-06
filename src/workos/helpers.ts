@@ -582,8 +582,15 @@ export function formatConnection(conn: WorkOSConnection): Record<string, unknown
   return formatEntity(conn);
 }
 
+/**
+ * The spec's Profile carries `name` (the user's full name, nullable) beside `first_name` and
+ * `last_name`, and the SDKs read it as a required key — workos-python's `Profile.from_dict` fails
+ * without it (#129). The emulator stores only the two parts, so the full name is derived from them
+ * here, at the one place every profile response is built, and is null when neither is known.
+ */
 export function formatSSOProfile(p: WorkOSSSOProfile): Record<string, unknown> {
-  return formatEntity(p);
+  const name = [p.first_name, p.last_name].filter((part) => part).join(' ') || null;
+  return { ...formatEntity(p), name };
 }
 
 export function formatPipeConnection(pc: WorkOSPipeConnection): Record<string, unknown> {

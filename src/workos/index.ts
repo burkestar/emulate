@@ -62,7 +62,8 @@ import {
   formatInvitation,
   formatRole,
   formatPermission,
-  formatDirectory,
+  formatDirectoryActivatedEvent,
+  formatDirectoryDeletedEvent,
   formatDirectoryUser,
   formatDirectoryGroup,
   formatDomain,
@@ -676,7 +677,9 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: WorkOSSee
         domain: dirConfig.domain ?? null,
         type: dirConfig.type ?? 'generic scim v2.0',
         state: dirConfig.state ?? 'linked',
-        external_key: dirConfig.external_key ?? null,
+        // Production always assigns an external key, and the spec marks it required on both
+        // the Directory object and the dsync.activated payload.
+        external_key: dirConfig.external_key ?? randomBytes(12).toString('base64url'),
       });
 
       // Groups are inserted first: a seeded user embeds the groups it belongs to, and the
@@ -1263,9 +1266,10 @@ export const workosPlugin: ServicePlugin = {
       // `linked` means: a directory seeded `unlinked` or `invalid_credentials` has not
       // activated, the same way an inactive connection does not announce itself.
       onInsert: (d) => {
-        if (d.state === 'linked') eventBus.emit({ event: EVENTS.dsyncActivated, data: formatDirectory(d) });
+        if (d.state === 'linked')
+          eventBus.emit({ event: EVENTS.dsyncActivated, data: formatDirectoryActivatedEvent(d, ws) });
       },
-      onDelete: (d) => eventBus.emit({ event: EVENTS.dsyncDeleted, data: formatDirectory(d) }),
+      onDelete: (d) => eventBus.emit({ event: EVENTS.dsyncDeleted, data: formatDirectoryDeletedEvent(d) }),
     });
     const emitDirectoryGroupMembership = (user: WorkOSDirectoryUser, groupId: string, added: boolean) => {
       const group = ws.directoryGroups.get(groupId);

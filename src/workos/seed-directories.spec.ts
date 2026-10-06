@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach } from 'bun:test';
 import { createEmulator, type Emulator } from '../index.js';
 import { validateSeedConfig } from './config-validator.js';
+import { EVENT_DATA_REQUIREMENTS } from './generated/events.js';
 
 describe('Seeding directories', () => {
   let emulator: Emulator | undefined;
@@ -110,6 +111,34 @@ describe('Seeding directories', () => {
     expect(names).toContain('dsync.activated');
     expect(names).toContain('dsync.group.created');
     expect(names).toContain('dsync.user.created');
+  });
+
+  it('shapes dsync.activated as the spec event payload, with domains instead of domain', async () => {
+    emulator = await createEmulator({
+      port: 0,
+      seed: {
+        organizations: [{ name: 'Acme Local', domains: [{ domain: 'acme.test', state: 'verified' }] }],
+        directories: [{ name: 'Acme SCIM', organization: 'Acme Local', domain: 'acme.test' }],
+      },
+    });
+
+    const evts = await get(`${emulator.url}/events?events[]=dsync.activated`, emulator.apiKey);
+    expect(evts.data).toHaveLength(1);
+    const data = evts.data[0].data;
+    for (const field of EVENT_DATA_REQUIREMENTS['dsync.activated'].required) expect(data).toHaveProperty(field);
+    expect(data).not.toHaveProperty('domain');
+    expect(typeof data.external_key).toBe('string');
+    // Event payloads keep the legacy state names; `linked` is `active` there.
+    expect(data.state).toBe('active');
+
+    const org = (await get(`${emulator.url}/organizations`, emulator.apiKey)).data[0];
+    expect(data.domains).toEqual([{ object: 'organization_domain', id: org.domains[0].id, domain: 'acme.test' }]);
+
+    // The REST Directory object keeps its own shape.
+    const directory = (await get(`${emulator.url}/directories`, emulator.apiKey)).data[0];
+    expect(directory.domain).toBe('acme.test');
+    expect(directory.state).toBe('linked');
+    expect(directory.external_key).toBe(data.external_key);
   });
 
   it('emits dsync.activated only for a linked directory', async () => {
@@ -483,6 +512,13 @@ describe('Seeding directories', () => {
 
     const evts = await get(`${emulator.url}/events?events[]=dsync.deleted`, emulator.apiKey);
     expect(evts.data.map((e: any) => e.event)).toContain('dsync.deleted');
+    const data = evts.data[0].data;
+    for (const field of EVENT_DATA_REQUIREMENTS['dsync.deleted'].required) expect(data).toHaveProperty(field);
+    expect(data.id).toBe(directory.id);
+    expect(data.state).toBe('deleting');
+    expect(data).not.toHaveProperty('domain');
+    expect(data).not.toHaveProperty('domains');
+    expect(data).not.toHaveProperty('external_key');
   });
 
   it('maps a role for a directory user with no AuthKit membership', async () => {

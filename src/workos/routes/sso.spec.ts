@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { createServer, type ApiKeyMap } from '../../core/index.js';
-import { workosPlugin } from '../index.js';
+import { workosPlugin, seedFromConfig } from '../index.js';
 import { getWorkOSStore } from '../store.js';
 import { STORE_KEYS } from '../constants.js';
 import type { Store } from '../../core/index.js';
@@ -327,9 +327,13 @@ describe('SSO routes', () => {
     expect(body.profile).toBeDefined();
     expect(body.profile.object).toBe('profile');
     expect(body.access_token).toBeDefined();
-    // The SDKs parse this as SSOTokenResponse, which requires both of these (#129).
+    // The SDKs parse this as SSOTokenResponse, which requires both of these (#129). The lifetime
+    // is production's: its authorization-code exchanger mints the token with addMinutes(5).
     expect(body.token_type).toBe('Bearer');
-    expect(body.expires_in).toBe(600);
+    expect(body.expires_in).toBe(300);
+    // A profile the emulator mints has no stored name, and none is composed from the parts.
+    expect(body.profile.first_name).toBe('user');
+    expect(body.profile.name).toBeNull();
     // The token's own lifetime matches what the response reports.
     const [, payload] = (body.access_token as string).split('.');
     const claims = JSON.parse(Buffer.from(payload, 'base64url').toString());
@@ -396,8 +400,12 @@ describe('SSO routes', () => {
     });
   });
 
-  it('derives the profile name from first_name and last_name', () => {
-    const base = {
+  // Production stores `name` as its own attribute — its reconciler sets it only when the
+  // connection's attribute map has a `name` key — and its serializer emits the stored value or
+  // null. It is never composed from the two parts: a derived "Ada Lovelace" would pass against
+  // the emulator and come back null from WorkOS.
+  it('reports the stored name, never one composed from first_name and last_name', () => {
+    const base: WorkOSSSOProfile = {
       id: 'prof_1',
       object: 'profile',
       connection_id: 'conn_1',
@@ -405,18 +413,37 @@ describe('SSO routes', () => {
       organization_id: 'org_1',
       idp_id: 'idp_1',
       email: 'ada@acme.test',
+      first_name: 'Ada',
+      last_name: 'Lovelace',
+      name: null,
       groups: [],
       raw_attributes: {},
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
-    } as const;
-    const name = (first_name: string | null, last_name: string | null) =>
-      formatSSOProfile({ ...base, first_name, last_name } as unknown as WorkOSSSOProfile).name;
+    };
 
-    expect(name('Ada', 'Lovelace')).toBe('Ada Lovelace');
-    expect(name('Ada', null)).toBe('Ada');
-    expect(name(null, 'Lovelace')).toBe('Lovelace');
-    expect(name(null, null)).toBeNull();
+    expect(formatSSOProfile(base).name).toBeNull();
+    expect(formatSSOProfile({ ...base, name: 'Ada Lovelace' }).name).toBe('Ada Lovelace');
+    expect(formatSSOProfile({ ...base, name: 'Countess of Lovelace' }).name).toBe('Countess of Lovelace');
+  });
+
+  it('seeds a profile name only when the seed supplies one', () => {
+    seedFromConfig(store, 'http://localhost:0', {
+      organizations: [{ name: 'Seeded Org' }],
+      connections: [
+        {
+          name: 'Seeded SSO',
+          organization: 'Seeded Org',
+          profiles: [
+            { email: 'named@seeded.test', first_name: 'Ada', last_name: 'Lovelace', name: 'Ada Lovelace' },
+            { email: 'unnamed@seeded.test', first_name: 'Ada', last_name: 'Lovelace' },
+          ],
+        },
+      ],
+    });
+    const profiles = getWorkOSStore(store).ssoProfiles.all();
+    expect(profiles.find((p) => p.email === 'named@seeded.test')?.name).toBe('Ada Lovelace');
+    expect(profiles.find((p) => p.email === 'unnamed@seeded.test')?.name).toBeNull();
   });
 
   it('returns 404 when no active connection found', async () => {

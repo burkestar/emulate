@@ -583,14 +583,22 @@ export function formatConnection(conn: WorkOSConnection): Record<string, unknown
 }
 
 /**
+ * The spec's Profile has no timestamps, and production's serializer
+ * (`api/src/sso/utils/serialize-profile.ts`) emits none — `created_at` and `updated_at` are
+ * the store's bookkeeping, not part of the wire shape.
+ */
+const SSO_PROFILE_EXCLUDE = new Set([...INTERNAL_FIELDS, 'created_at', 'updated_at']);
+
+/**
  * The spec's Profile carries `name` (the user's full name, nullable) beside `first_name` and
  * `last_name`, and the SDKs read it as a required key — workos-python's `Profile.from_dict` fails
- * without it (#129). The emulator stores only the two parts, so the full name is derived from them
- * here, at the one place every profile response is built, and is null when neither is known.
+ * without it (#129). It is emitted as stored, never composed from the two parts: production's
+ * reconciler (`api/src/profiles/profile-reconciler.ts`) sets `name` only when the connection's
+ * attribute map has a `name` key, and its serializer returns that stored value or null. A
+ * derived "Ada Lovelace" would pass against the emulator and come back null from WorkOS.
  */
 export function formatSSOProfile(p: WorkOSSSOProfile): Record<string, unknown> {
-  const name = [p.first_name, p.last_name].filter((part) => part).join(' ') || null;
-  return { ...formatEntity(p), name };
+  return formatEntity(p, { exclude: SSO_PROFILE_EXCLUDE });
 }
 
 export function formatPipeConnection(pc: WorkOSPipeConnection): Record<string, unknown> {

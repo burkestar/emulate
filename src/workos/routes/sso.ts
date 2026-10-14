@@ -29,12 +29,14 @@ const OAUTH_CONNECTION_TYPES = new Set<WorkOSConnectionType>([
 ]);
 
 /**
- * Lifetime of the access token `/sso/token` issues, in seconds. Production reports it as
- * `expires_in` (the API reference's example is 600), and the SDKs require that field — the
- * Python SDK's `SSOTokenResponse` fails to parse a response without it — so the emulator signs
- * the token with this lifetime and reports the same number.
+ * Lifetime of the access token `/sso/token` issues, in seconds. Production's
+ * `AuthorizationCodeExchanger.exchangeAuthorizationCode`
+ * (`api/src/authorization-codes/authorization-code-exchanger.ts`) mints the token with
+ * `addMinutes(5)`, so `expires_in` is 300 — not the 600 the API reference's example shows. The
+ * SDKs require the field (the Python SDK's `SSOTokenResponse` fails to parse a response without
+ * it), so the emulator signs the token with this lifetime and reports the same number.
  */
-const SSO_TOKEN_TTL_SECONDS = 600;
+const SSO_TOKEN_TTL_SECONDS = 300;
 
 interface SSOAuthorizeParams {
   redirectUri: string;
@@ -125,6 +127,9 @@ export function ssoRoutes(ctx: RouteContext): void {
         email,
         first_name: email.split('@')[0],
         last_name: null,
+        // Production sets `name` only when the connection's attribute map has a `name` key, and
+        // the emulator's stand-in IdP maps none — so null, never a value composed from the parts.
+        name: null,
         groups: [],
         raw_attributes: { email },
       });

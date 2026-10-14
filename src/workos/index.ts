@@ -219,6 +219,11 @@ export interface WorkOSSeedConnection {
     email: string;
     first_name?: string;
     last_name?: string;
+    /**
+     * The full name as its own attribute, the way production stores it. Null when omitted —
+     * never composed from `first_name` and `last_name`.
+     */
+    name?: string;
     idp_id?: string;
     groups?: string[];
   }>;
@@ -653,6 +658,7 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: WorkOSSee
             email: p.email,
             first_name: p.first_name ?? null,
             last_name: p.last_name ?? null,
+            name: p.name ?? null,
             groups: p.groups ?? [],
             raw_attributes: { email: p.email },
           });

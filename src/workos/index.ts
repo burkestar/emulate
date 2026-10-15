@@ -1283,7 +1283,14 @@ export const workosPlugin: ServicePlugin = {
         if (d.state === 'linked')
           eventBus.emit({ event: EVENTS.dsyncActivated, data: formatDirectoryActivatedEvent(d, ws) });
       },
-      onDelete: (d) => eventBus.emit({ event: EVENTS.dsyncDeleted, data: formatDirectoryDeletedEvent(d) }),
+      onDelete: (d) => {
+        // Production queues the deletion without an event when the directory is Validating
+        // or Inactive and has no groups (directory-deletion-queuer.ts:23-25): `unlinked` is
+        // Inactive, and the emulator has no validating state. The delete route removes the
+        // directory row before its groups, so they are still countable here.
+        if (d.state === 'unlinked' && ws.directoryGroups.findBy('directory_id', d.id).length === 0) return;
+        eventBus.emit({ event: EVENTS.dsyncDeleted, data: formatDirectoryDeletedEvent(d) });
+      },
     });
     const emitDirectoryGroupMembership = (user: WorkOSDirectoryUser, groupId: string, added: boolean) => {
       const group = ws.directoryGroups.get(groupId);

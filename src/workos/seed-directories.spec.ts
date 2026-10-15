@@ -521,6 +521,63 @@ describe('Seeding directories', () => {
     expect(data).not.toHaveProperty('external_key');
   });
 
+  it('emits no dsync.deleted for an unlinked directory with no groups', async () => {
+    // Production queues such a deletion without an event (directory-deletion-queuer.ts): a
+    // directory that never activated and synced nothing has nothing to announce.
+    emulator = await createEmulator({
+      port: 0,
+      seed: {
+        organizations: [{ name: 'Acme Corp' }],
+        directories: [{ name: 'Acme Okta', organization: 'Acme Corp', state: 'unlinked' }],
+      },
+    });
+
+    const directory = (await get(`${emulator.url}/directories`, emulator.apiKey)).data[0];
+    const res = await fetch(`${emulator.url}/directories/${directory.id}`, {
+      method: 'DELETE',
+      headers: auth(emulator.apiKey),
+    });
+    expect(res.status).toBe(204);
+    expect((await get(`${emulator.url}/directories`, emulator.apiKey)).data).toHaveLength(0);
+
+    const evts = await get(`${emulator.url}/events?events[]=dsync.deleted`, emulator.apiKey);
+    expect(evts.data).toHaveLength(0);
+  });
+
+  it('emits dsync.deleted for an unlinked directory that has a group', async () => {
+    emulator = await createEmulator({
+      port: 0,
+      seed: {
+        organizations: [{ name: 'Acme Corp' }],
+        directories: [{ name: 'Acme Okta', organization: 'Acme Corp', state: 'unlinked', groups: ['Engineering'] }],
+      },
+    });
+
+    const directory = (await get(`${emulator.url}/directories`, emulator.apiKey)).data[0];
+    await fetch(`${emulator.url}/directories/${directory.id}`, { method: 'DELETE', headers: auth(emulator.apiKey) });
+
+    const evts = await get(`${emulator.url}/events?events[]=dsync.deleted`, emulator.apiKey);
+    expect(evts.data.map((e: any) => e.data.id)).toEqual([directory.id]);
+    expect(evts.data[0].data.state).toBe('deleting');
+  });
+
+  it('emits dsync.deleted for an invalid_credentials directory with no groups', async () => {
+    // Production exempts only Validating and Inactive from the event.
+    emulator = await createEmulator({
+      port: 0,
+      seed: {
+        organizations: [{ name: 'Acme Corp' }],
+        directories: [{ name: 'Acme Okta', organization: 'Acme Corp', state: 'invalid_credentials' }],
+      },
+    });
+
+    const directory = (await get(`${emulator.url}/directories`, emulator.apiKey)).data[0];
+    await fetch(`${emulator.url}/directories/${directory.id}`, { method: 'DELETE', headers: auth(emulator.apiKey) });
+
+    const evts = await get(`${emulator.url}/events?events[]=dsync.deleted`, emulator.apiKey);
+    expect(evts.data.map((e: any) => e.data.id)).toEqual([directory.id]);
+  });
+
   it('maps a role for a directory user with no AuthKit membership', async () => {
     emulator = await createEmulator({
       port: 0,
